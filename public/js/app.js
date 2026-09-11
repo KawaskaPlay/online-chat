@@ -1,7 +1,7 @@
 import { auth } from "./firebase-init.js";
 import { watchAuthState, logout } from "./auth.js";
 import {
-  watchMyChats, getOrCreateDirectChat, createGroupChat, searchUsers, getUserProfile,
+  watchMyChats, getOrCreateDirectChat, createGroupChat, searchUsers, listUsers, getUserProfile,
 } from "./chats.js";
 import { watchMessages, sendTextMessage } from "./messages.js";
 import { renderAvatar, escapeHtml, formatTime, formatDay } from "./ui-helpers.js";
@@ -10,8 +10,10 @@ import { EMOJI_LIST } from "./emoji.js";
 let myProfile = null;
 let currentChatId = null;
 let unsubscribeMessages = null;
+let replyingTo = null; // { messageId, senderId, text } — сообщение, на которое отвечаем, или null
 const profileCache = new Map(); // uid -> профиль (кэш, чтобы не дёргать Firestore на каждое сообщение)
 const chatsCache = new Map(); // chatId -> данные чата (для шапки/списка)
+const messagesById = new Map(); // messageId -> данные сообщения текущего открытого чата (для реплаев)
 
 const appEl = document.getElementById("app");
 
@@ -87,6 +89,7 @@ async function getCachedProfile(uid) {
 
 async function openChat(chatId) {
   currentChatId = chatId;
+  cancelReply(); // реплай привязан к конкретному чату — при переключении сбрасываем
   appEl.classList.add("chat-open");
   document.getElementById("chat-empty").classList.add("hidden");
   document.getElementById("chat-view").classList.remove("hidden");
@@ -119,9 +122,11 @@ async function renderMessages(messages) {
   const wasAtBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
 
   container.innerHTML = "";
+  messagesById.clear();
   let lastDay = null;
 
   for (const msg of messages) {
+    messagesById.set(msg.id, msg);
     const profile = await getCachedProfile(msg.senderId);
     const isMine = msg.senderId === auth.currentUser.uid;
     const day = msg.createdAt ? formatDay(msg.createdAt) : null;
@@ -136,18 +141,35 @@ async function renderMessages(messages) {
 
     const row = document.createElement("div");
     row.className = "message-row " + (isMine ? "mine" : "theirs");
+    row.dataset.messageId = msg.id;
 
     const bodyHtml = msg.type === "image"
       ? `<a href="${msg.imageUrl}" target="_blank" rel="noopener"><img class="message-image" src="${msg.imageUrl}" alt="фото"></a>`
       : `<div class="message-text">${escapeHtml(msg.text)}</div>`;
 
+    let replyQuoteHtml = "";
+    if (msg.replyTo) {
+      const replyProfile = await getCachedProfile(msg.replyTo.senderId);
+      const replyAuthorName = msg.replyTo.senderId === auth.currentUser.uid
+        ? "Вы"
+        : (replyProfile?.username || "Пользователь");
+      replyQuoteHtml = `
+        <div class="message-reply-quote" data-scroll-to="${escapeHtml(msg.replyTo.messageId)}">
+          <div class="message-reply-quote-author">${escapeHtml(replyAuthorName)}</div>
+          <div class="message-reply-quote-text">${escapeHtml(msg.replyTo.text || "")}</div>
+        </div>
+      `;
+    }
+
     row.innerHTML = `
       ${isMine ? "" : renderAvatar(profile?.username || "?", profile?.avatarUrl, 32)}
       <div class="message-bubble">
         ${isMine ? "" : `<div class="message-author">${escapeHtml(profile?.username || "?")}</div>`}
+        ${replyQuoteHtml}
         ${bodyHtml}
         <div class="message-time">${formatTime(msg.createdAt)}</div>
       </div>
+      <button type="button" class="message-reply-btn" title="Ответить">↩</button>
     `;
     container.appendChild(row);
   }
@@ -157,6 +179,49 @@ async function renderMessages(messages) {
   }
 }
 
+// ---------- Ответ на сообщение (реплай) ----------
+
+document.getElementById("messages").addEventListener("click", (e) => {
+  const replyBtn = e.target.closest(".message-reply-btn");
+  if (replyBtn) {
+    const row = replyBtn.closest(".message-row");
+    if (row) startReply(row.dataset.messageId);
+    return;
+  }
+  const quote = e.target.closest(".message-reply-quote");
+  if (quote) {
+    const targetRow = document.querySelector(
+      `.message-row[data-message-id="${CSS.escape(quote.dataset.scrollTo)}"]`
+    );
+    if (targetRow) {
+      targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+      targetRow.classList.add("highlight");
+      setTimeout(() => targetRow.classList.remove("highlight"), 1200);
+    }
+  }
+});
+
+function startReply(messageId) {
+  const msg = messagesById.get(messageId);
+  if (!msg) return;
+  const isMine = msg.senderId === auth.currentUser.uid;
+  const authorName = isMine ? "Вы" : (profileCache.get(msg.senderId)?.username || "Пользователь");
+  const text = msg.type === "image" ? "📷 Фото" : msg.text;
+
+  replyingTo = { messageId, senderId: msg.senderId, text };
+  document.getElementById("reply-preview-author").textContent = authorName;
+  document.getElementById("reply-preview-text").textContent = text;
+  document.getElementById("reply-preview").classList.remove("hidden");
+  document.getElementById("message-input").focus();
+}
+
+function cancelReply() {
+  replyingTo = null;
+  document.getElementById("reply-preview").classList.add("hidden");
+}
+
+document.getElementById("reply-preview-cancel").addEventListener("click", cancelReply);
+
 // ---------- Отправка сообщений ----------
 
 document.getElementById("composer").addEventListener("submit", async (e) => {
@@ -164,10 +229,12 @@ document.getElementById("composer").addEventListener("submit", async (e) => {
   if (!currentChatId) return;
   const input = document.getElementById("message-input");
   const text = input.value;
+  const replyPayload = replyingTo ? { ...replyingTo } : null;
   input.value = "";
+  cancelReply();
   if (text.trim()) {
     try {
-      await sendTextMessage(currentChatId, text);
+      await sendTextMessage(currentChatId, text, replyPayload);
     } catch (err) {
       alert("Не удалось отправить сообщение: " + err.message);
     }
@@ -199,20 +266,33 @@ document.addEventListener("click", (e) => {
 // ---------- Модалка: новый личный чат ----------
 
 const dmModal = document.getElementById("dm-modal");
+
+async function pickDmUser(user) {
+  dmModal.classList.add("hidden");
+  const chatId = await getOrCreateDirectChat(user.uid);
+  openChat(chatId);
+}
+
+// Показываем список пользователей сразу при открытии модалки — не нужно
+// ничего вводить, можно просто кликнуть по нужному человеку. Поле поиска
+// остаётся, чтобы можно было сузить список, если пользователей много.
+async function refreshDmResults(filter = "") {
+  const results = filter.trim()
+    ? await searchUsers(filter, auth.currentUser.uid)
+    : await listUsers(auth.currentUser.uid);
+  renderUserResults("dm-results", results, pickDmUser);
+}
+
 document.getElementById("new-dm-btn").addEventListener("click", () => {
   document.getElementById("dm-search").value = "";
   document.getElementById("dm-results").innerHTML = "";
   dmModal.classList.remove("hidden");
   document.getElementById("dm-search").focus();
+  refreshDmResults();
 });
 
-document.getElementById("dm-search").addEventListener("input", debounce(async (e) => {
-  const results = await searchUsers(e.target.value, auth.currentUser.uid);
-  renderUserResults("dm-results", results, async (user) => {
-    dmModal.classList.add("hidden");
-    const chatId = await getOrCreateDirectChat(user.uid);
-    openChat(chatId);
-  });
+document.getElementById("dm-search").addEventListener("input", debounce((e) => {
+  refreshDmResults(e.target.value);
 }, 300));
 
 // ---------- Модалка: новая группа ----------
@@ -220,23 +300,32 @@ document.getElementById("dm-search").addEventListener("input", debounce(async (e
 const groupModal = document.getElementById("group-modal");
 const selectedGroupMembers = new Map(); // uid -> username
 
-document.getElementById("new-group-btn").addEventListener("click", () => {
-  document.getElementById("group-name").value = "";
-  document.getElementById("group-search").value = "";
-  document.getElementById("group-results").innerHTML = "";
-  selectedGroupMembers.clear();
-  renderGroupChips();
-  groupModal.classList.remove("hidden");
-});
-
-document.getElementById("group-search").addEventListener("input", debounce(async (e) => {
-  const results = await searchUsers(e.target.value, auth.currentUser.uid);
+// Список исключает и себя, и уже выбранных участников — не нужно листать
+// мимо тех, кого уже добавили.
+async function refreshGroupResults(filter = "") {
+  const excludeUids = [auth.currentUser.uid, ...selectedGroupMembers.keys()];
+  const results = filter.trim()
+    ? await searchUsers(filter, excludeUids)
+    : await listUsers(excludeUids);
   renderUserResults("group-results", results, (user) => {
     selectedGroupMembers.set(user.uid, user.username);
     renderGroupChips();
     document.getElementById("group-search").value = "";
-    document.getElementById("group-results").innerHTML = "";
+    refreshGroupResults();
   });
+}
+
+document.getElementById("new-group-btn").addEventListener("click", () => {
+  document.getElementById("group-name").value = "";
+  document.getElementById("group-search").value = "";
+  selectedGroupMembers.clear();
+  renderGroupChips();
+  groupModal.classList.remove("hidden");
+  refreshGroupResults();
+});
+
+document.getElementById("group-search").addEventListener("input", debounce((e) => {
+  refreshGroupResults(e.target.value);
 }, 300));
 
 function renderGroupChips() {
@@ -249,6 +338,7 @@ function renderGroupChips() {
     chip.addEventListener("click", () => {
       selectedGroupMembers.delete(uid);
       renderGroupChips();
+      refreshGroupResults(document.getElementById("group-search").value);
     });
     chipsEl.appendChild(chip);
   }

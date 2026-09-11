@@ -4,13 +4,33 @@ import {
   onSnapshot, serverTimestamp, getDocs,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
+// excludeUids может быть одним uid или массивом uid — удобно и для "исключить
+// только себя" (личный чат), и для "исключить себя + уже выбранных" (группа).
+function excludeSet(excludeUids) {
+  if (!excludeUids) return new Set();
+  return new Set(Array.isArray(excludeUids) ? excludeUids : [excludeUids]);
+}
+
+// Список пользователей без фильтра по имени — чтобы показывать сразу при
+// открытии модалки выбора, не заставляя вводить ник вручную.
+export async function listUsers(excludeUids, limitN = 50) {
+  const exclude = excludeSet(excludeUids);
+  const usernamesRef = collection(db, "usernames");
+  const q = query(usernamesRef, orderBy("__name__"), limit(limitN));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((d) => ({ username: d.id, uid: d.data().uid }))
+    .filter((u) => !exclude.has(u.uid));
+}
+
 // Поиск пользователей по началу имени. Работает через коллекцию
 // usernames/{username}, которая заодно служит и индексом поиска
 // (Firestore умеет диапазонные запросы по ID документа).
-export async function searchUsers(prefix, excludeUid) {
+export async function searchUsers(prefix, excludeUids) {
   const prefixLower = prefix.trim().toLowerCase();
-  if (!prefixLower) return [];
+  if (!prefixLower) return listUsers(excludeUids);
 
+  const exclude = excludeSet(excludeUids);
   const usernamesRef = collection(db, "usernames");
   const q = query(
     usernamesRef,
@@ -22,7 +42,7 @@ export async function searchUsers(prefix, excludeUid) {
   const snap = await getDocs(q);
   return snap.docs
     .map((d) => ({ username: d.id, uid: d.data().uid }))
-    .filter((u) => u.uid !== excludeUid);
+    .filter((u) => !exclude.has(u.uid));
 }
 
 function dmChatId(uidA, uidB) {

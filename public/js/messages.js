@@ -14,10 +14,13 @@ export function watchMessages(chatId, callback) {
   });
 }
 
-export async function sendTextMessage(chatId, text) {
+// replyTo (необязательно) — { messageId, senderId, text } сообщения, на
+// которое отвечаем. Храним компактный "слепок" вместо ссылки, чтобы при
+// рендере не приходилось отдельно читать оригинальное сообщение.
+export async function sendTextMessage(chatId, text, replyTo = null) {
   const trimmed = text.trim();
   if (!trimmed) return;
-  await addMessage(chatId, { type: "text", text: trimmed });
+  await addMessage(chatId, { type: "text", text: trimmed, replyTo: replyTo || null });
 }
 
 // Отправка фото временно отключена (нужен платный план Blaze для Firebase
