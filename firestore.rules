@@ -30,8 +30,14 @@ service cloud.firestore {
     // Читать/обновлять (например, lastMessage) может только участник чата.
     // Создавать чат может только тот, кто сам входит в список участников.
     match /chats/{chatId} {
+      // resource == null — значит документа ещё нет (например, проверяем,
+      // существует ли уже личный чат с человеком, перед тем как его
+      // создать). Без этой проверки Firestore при попытке прочитать ещё
+      // не существующий чат сразу отдаёт permission-denied вместо того,
+      // чтобы просто сказать "не найдено" — из-за этого не получалось
+      // создать новый личный чат.
       allow read, update: if request.auth != null
-                           && request.auth.uid in resource.data.memberIds;
+                           && (resource == null || request.auth.uid in resource.data.memberIds);
       allow create: if request.auth != null
                     && request.auth.uid in request.resource.data.memberIds;
       allow delete: if false;
