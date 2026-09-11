@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Чат — вход</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="auth-body">
+  <main class="auth-card">
+    <h1>💬 Чат</h1>
+
+    <div class="tabs">
+      <button type="button" id="tab-login" class="tab active">Войти</button>
+      <button type="button" id="tab-register" class="tab">Регистрация</button>
+    </div>
+
+    <form id="login-form" class="auth-form">
+      <label>Имя пользователя
+        <input type="text" id="login-username" autocomplete="username" required>
+      </label>
+      <label>Пароль
+        <input type="password" id="login-password" autocomplete="current-password" required>
+      </label>
+      <p class="error" id="login-error"></p>
+      <button type="submit">Войти</button>
+    </form>
+
+    <form id="register-form" class="auth-form hidden">
+      <label>Имя пользователя
+        <input type="text" id="register-username" autocomplete="username" required>
+      </label>
+      <p class="hint" id="username-hint"></p>
+      <label>Пароль
+        <input type="password" id="register-password" autocomplete="new-password" required>
+      </label>
+      <label>Повторите пароль
+        <input type="password" id="register-password2" autocomplete="new-password" required>
+      </label>
+      <p class="error" id="register-error"></p>
+      <button type="submit">Зарегистрироваться</button>
+    </form>
+  </main>
+
+  <script type="module" src="js/index-page.js"></script>
+</body>
+</html>

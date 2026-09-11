@@ -1,0 +1,16 @@
+{
+  "name": "online-chat",
+  "version": "1.0.0",
+  "description": "Учебный проект: онлайн-чат с регистрацией, личными и групповыми чатами (Firebase)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,29 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Аватарки: путь avatars/{uid}. Смотреть может кто угодно (аватарки
+    // публичны в интерфейсе чата), загружать — только владелец, и только
+    // картинку размером до 5 МБ.
+    match /avatars/{uid} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Фото в чатах: путь chat-photos/{chatId}/{fileName}. Смотреть и
+    // загружать может только участник соответствующего чата (сверяемся
+    // с документом чата в Firestore), файл — картинка до 8 МБ.
+    match /chat-photos/{chatId}/{fileName} {
+      allow read: if request.auth != null
+                  && request.auth.uid in firestore.get(/databases/(default)/documents/chats/$(chatId)).data.memberIds;
+      allow write: if request.auth != null
+                   && request.auth.uid in firestore.get(/databases/(default)/documents/chats/$(chatId)).data.memberIds
+                   && request.resource.size < 8 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+  }
+}
