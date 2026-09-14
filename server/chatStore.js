@@ -67,6 +67,17 @@ async function getProfile(uid) {
   return { uid, username: data.username, avatarUrl: data.avatarUrl || null };
 }
 
+// Для аккаунтов Firebase Authentication, созданных ещё до переезда чата на
+// Redis (когда профиль хранился в Firestore): вход через Firebase проходит
+// нормально, а профиля в Redis для такого uid никогда не было. Вместо того
+// чтобы заставлять человека регистрироваться заново — досоздаём профиль при
+// входе, если его ещё нет. Если уже есть — просто возвращаем как есть.
+async function ensureProfile(uid, usernameHint) {
+  const existing = await getProfile(uid);
+  if (existing) return existing;
+  return registerProfile(uid, usernameHint);
+}
+
 async function resolveUsers(usernames, excludeSet) {
   if (usernames.length === 0) return [];
   const uids = await redis.mget(usernames.map(usernameKey));
@@ -241,6 +252,7 @@ module.exports = {
   isUsernameTaken,
   registerProfile,
   getProfile,
+  ensureProfile,
   listUsers,
   searchUsers,
   getOrCreateDirectChat,

@@ -77,6 +77,18 @@ export async function login({ username, password }) {
   } catch (err) {
     throw new Error("Неверное имя пользователя или пароль");
   }
+
+  // Пересоединяем сокет, чтобы сервер увидел уже вошедшего пользователя, и
+  // на всякий случай досоздаём профиль в Redis (см. ensureProfile на
+  // сервере) — это нужно только для аккаунтов, оставшихся ещё с тех времён,
+  // когда профиль хранился в Firestore. Если что-то пойдёт не так — не
+  // блокируем вход, экран чата и так покажет запасной ник.
+  reauth();
+  try {
+    await call("ensure-profile", { username: usernameLower });
+  } catch (err) {
+    console.warn("Не удалось проверить/восстановить профиль:", err.message);
+  }
 }
 
 export function logout() {

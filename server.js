@@ -80,6 +80,19 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Для аккаунтов, созданных ещё до переезда на Redis (см. auth.js login()):
+  // досоздаёт профиль в Redis, если его почему-то ещё нет, вместо того чтобы
+  // заставлять человека регистрироваться заново.
+  socket.on("ensure-profile", async (payload, ack) => {
+    try {
+      const uid = requireUid(socket);
+      const profile = await chatStore.ensureProfile(uid, payload?.username);
+      ack?.({ ok: true, profile });
+    } catch (err) {
+      ack?.({ ok: false, error: err.message });
+    }
+  });
+
   socket.on("get-profile", async (payload, ack) => {
     try {
       const profile = await chatStore.getProfile(payload?.uid);
