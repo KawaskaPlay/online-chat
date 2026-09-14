@@ -1,7 +1,18 @@
 import { watchAuthState, login, register, isUsernameTaken, isValidUsername } from "./auth.js";
 
-// Если пользователь уже вошёл — сразу переходим в чат.
-watchAuthState((user) => {
+// Если пользователь уже вошёл (сохранённая сессия) — сразу переходим в чат.
+// Важно: отписываемся после ПЕРВОГО срабатывания. onAuthStateChanged
+// вызывается не только при реальном входе, но и сам по себе, как только
+// createUserWithEmailAndPassword/signInWithEmailAndPassword переводит
+// Firebase в состояние "пользователь вошёл" — то есть ещё ДО того, как
+// register()/login() успеют доделать свою часть (пересоздать профиль в
+// Redis и т.п.). Если бы этот обработчик продолжал слушать и после первого
+// раза, он бы переходил на chat.html слишком рано, и профиль в Redis
+// просто не успевал бы создаться. Переход после самой регистрации/входа
+// делают ниже явно, уже после того как register()/login() полностью
+// отработали.
+const unsubscribeInitialAuthCheck = watchAuthState((user) => {
+  unsubscribeInitialAuthCheck();
   if (user) window.location.href = "chat.html";
 });
 
