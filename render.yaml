@@ -8,3 +8,7 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20.0.0
+      - key: REDIS_URL
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        value: online-chat-363a3

@@ -1,107 +1,83 @@
-import { db, auth } from "./firebase-init.js";
-import {
-  collection, doc, getDoc, setDoc, addDoc, query, where, orderBy, limit,
-  onSnapshot, serverTimestamp, getDocs,
-} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { call, getSocket } from "./realtime.js";
 
-// excludeUids может быть одним uid или массивом uid — удобно и для "исключить
-// только себя" (личный чат), и для "исключить себя + уже выбранных" (группа).
-function excludeSet(excludeUids) {
-  if (!excludeUids) return new Set();
-  return new Set(Array.isArray(excludeUids) ? excludeUids : [excludeUids]);
+// excludeUids может быть одним uid или массивом uid — удобно и для
+// "исключить только себя" (личный чат), и для "исключить себя + уже
+// выбранных" (группа).
+function normalizeExclude(excludeUids) {
+  if (!excludeUids) return [];
+  return Array.isArray(excludeUids) ? excludeUids : [excludeUids];
 }
 
 // Список пользователей без фильтра по имени — чтобы показывать сразу при
 // открытии модалки выбора, не заставляя вводить ник вручную.
 export async function listUsers(excludeUids, limitN = 50) {
-  const exclude = excludeSet(excludeUids);
-  const usernamesRef = collection(db, "usernames");
-  const q = query(usernamesRef, orderBy("__name__"), limit(limitN));
-  const snap = await getDocs(q);
-  return snap.docs
-    .map((d) => ({ username: d.id, uid: d.data().uid }))
-    .filter((u) => !exclude.has(u.uid));
+  const res = await call("list-users", { excludeUids: normalizeExclude(excludeUids), limit: limitN });
+  return res.users;
 }
 
-// Поиск пользователей по началу имени. Работает через коллекцию
-// usernames/{username}, которая заодно служит и индексом поиска
-// (Firestore умеет диапазонные запросы по ID документа).
+// Поиск пользователей по началу имени.
 export async function searchUsers(prefix, excludeUids) {
-  const prefixLower = prefix.trim().toLowerCase();
-  if (!prefixLower) return listUsers(excludeUids);
-
-  const exclude = excludeSet(excludeUids);
-  const usernamesRef = collection(db, "usernames");
-  const q = query(
-    usernamesRef,
-    orderBy("__name__"),
-    where("__name__", ">=", prefixLower),
-    where("__name__", "<=", prefixLower + ""),
-    limit(10)
-  );
-  const snap = await getDocs(q);
-  return snap.docs
-    .map((d) => ({ username: d.id, uid: d.data().uid }))
-    .filter((u) => !exclude.has(u.uid));
+  const res = await call("search-users", { prefix, excludeUids: normalizeExclude(excludeUids) });
+  return res.users;
 }
 
-function dmChatId(uidA, uidB) {
-  return "dm_" + [uidA, uidB].sort().join("_");
-}
-
-// Личный чат с конкретным человеком всегда имеет один и тот же ID
-// (составленный из двух uid), поэтому при повторном открытии чат не
-// дублируется — мы просто находим уже существующий документ.
 export async function getOrCreateDirectChat(otherUid) {
-  const myUid = auth.currentUser.uid;
-  const chatId = dmChatId(myUid, otherUid);
-  const chatRef = doc(db, "chats", chatId);
-  const snap = await getDoc(chatRef);
-  if (!snap.exists()) {
-    await setDoc(chatRef, {
-      type: "direct",
-      memberIds: [myUid, otherUid],
-      createdAt: serverTimestamp(),
-      createdBy: myUid,
-      lastMessage: null,
-    });
-  }
-  return chatId;
+  const res = await call("get-or-create-direct-chat", { otherUid });
+  return res.chatId;
 }
 
 export async function createGroupChat({ name, memberUids, avatarUrl }) {
-  const myUid = auth.currentUser.uid;
-  const allMembers = Array.from(new Set([myUid, ...memberUids]));
-  const docRef = await addDoc(collection(db, "chats"), {
-    type: "group",
-    name: name.trim(),
-    avatarUrl: avatarUrl || null,
-    memberIds: allMembers,
-    createdAt: serverTimestamp(),
-    createdBy: myUid,
-    lastMessage: null,
-  });
-  return docRef.id;
+  const res = await call("create-group-chat", { name, memberUids, avatarUrl });
+  return res.chatId;
 }
 
 // Список чатов текущего пользователя, обновляется в реальном времени.
-// Сортируем на клиенте (по времени последнего сообщения), чтобы не
-// требовать создания составного индекса в Firebase Console.
+// Раньше это был onSnapshot Firestore, теперь — события "chat-updated" по
+// WebSocket, которые сервер рассылает через Redis Pub/Sub. Сортируем на
+// клиенте (по времени последнего сообщения), как и раньше.
 export function watchMyChats(callback) {
-  const myUid = auth.currentUser.uid;
-  const q = query(collection(db, "chats"), where("memberIds", "array-contains", myUid));
-  return onSnapshot(q, (snap) => {
-    const chats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const socket = getSocket();
+  let chatsById = new Map();
+
+  function emit() {
+    const chats = Array.from(chatsById.values());
     chats.sort((a, b) => {
-      const ta = a.lastMessage?.createdAt?.toMillis?.() ?? a.createdAt?.toMillis?.() ?? 0;
-      const tb = b.lastMessage?.createdAt?.toMillis?.() ?? b.createdAt?.toMillis?.() ?? 0;
+      const ta = a.lastMessage?.createdAt ?? a.createdAt ?? 0;
+      const tb = b.lastMessage?.createdAt ?? b.createdAt ?? 0;
       return tb - ta;
     });
     callback(chats);
-  });
+  }
+
+  async function refresh() {
+    try {
+      const res = await call("list-chats");
+      chatsById = new Map(res.chats.map((c) => [c.id, c]));
+      emit();
+    } catch (err) {
+      console.error("Не удалось загрузить чаты:", err.message);
+    }
+  }
+
+  function onChatUpdated({ chat }) {
+    chatsById.set(chat.id, chat);
+    emit();
+  }
+
+  socket.on("chat-updated", onChatUpdated);
+  // "connect" сработает и сейчас (если сокет ещё не был подключён), и после
+  // каждого восстановления соединения — так список не "зависает", если на
+  // секунду пропал интернет.
+  socket.on("connect", refresh);
+  refresh();
+
+  return () => {
+    socket.off("chat-updated", onChatUpdated);
+    socket.off("connect", refresh);
+  };
 }
 
 export async function getUserProfile(uid) {
-  const snap = await getDoc(doc(db, "users", uid));
-  return snap.exists() ? { uid, ...snap.data() } : null;
+  const res = await call("get-profile", { uid });
+  return res.profile;
 }

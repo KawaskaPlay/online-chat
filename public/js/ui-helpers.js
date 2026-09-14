@@ -8,7 +8,11 @@ export function escapeHtml(str) {
 
 function toDate(value) {
   if (!value) return null;
-  return typeof value.toDate === "function" ? value.toDate() : value;
+  // Firestore Timestamp (на случай, если где-то ещё встретится) — теперь же
+  // createdAt приходит с сервера просто числом (мс), как из Redis.
+  if (typeof value.toDate === "function") return value.toDate();
+  if (typeof value === "number") return new Date(value);
+  return value;
 }
 
 export function formatTime(value) {

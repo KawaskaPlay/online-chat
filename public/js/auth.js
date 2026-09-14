@@ -1,5 +1,5 @@
-import { auth, db } from "./firebase-init.js";
-import { FAKE_EMAIL_DOMAIN } from "./firebase-config.js";
+import { auth } from "./firebase-init.js";
+import { call, reauth } from "./realtime.js";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -7,9 +7,11 @@ import {
   deleteUser,
   onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-import {
-  doc, getDoc, setDoc, serverTimestamp,
-} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+// Firebase Authentication (в режиме email/password) требует email, а не
+// username. Поэтому внутри мы превращаем "username" в
+// "username@chatapp.local" — обычный пользователь этого не видит.
+const FAKE_EMAIL_DOMAIN = "chatapp.local";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 
@@ -21,10 +23,11 @@ export function isValidUsername(username) {
   return USERNAME_RE.test(username.trim());
 }
 
+// Проверка "свободно ли имя" теперь идёт через сервер (Redis), а не
+// напрямую в базу — но с точки зрения остального кода ничего не изменилось.
 export async function isUsernameTaken(username) {
-  const usernameLower = normalizeUsername(username);
-  const snap = await getDoc(doc(db, "usernames", usernameLower));
-  return snap.exists();
+  const res = await call("check-username", { username: normalizeUsername(username) });
+  return !!res.taken;
 }
 
 export async function register({ username, password }) {
@@ -35,9 +38,6 @@ export async function register({ username, password }) {
   }
   if (password.length < 6) {
     throw new Error("Пароль должен быть не короче 6 символов");
-  }
-  if (await isUsernameTaken(usernameLower)) {
-    throw new Error("Это имя пользователя уже занято");
   }
 
   const email = `${usernameLower}@${FAKE_EMAIL_DOMAIN}`;
@@ -50,29 +50,23 @@ export async function register({ username, password }) {
     }
     throw new Error("Не удалось создать аккаунт: " + err.message);
   }
-  const uid = credential.user.uid;
 
+  // Аккаунт в Firebase Auth уже есть — пересоединяем сокет, чтобы сервер
+  // узнал уже вошедшего пользователя, и "застолбливаем" имя в Redis
+  // (атомарно: если кто-то успел раньше — вернётся ошибка "taken", и тогда
+  // откатываем созданный аккаунт Firebase, как и раньше с Firestore).
+  reauth();
   try {
-    // "Застолбить" имя пользователя. Правила Firestore (firestore.rules)
-    // разрешают только create, не update — поэтому если кто-то успел
-    // зарегистрировать это же имя долей секунды раньше, эта запись не пройдёт.
-    await setDoc(doc(db, "usernames", usernameLower), { uid });
+    await call("register-profile", { username: usernameLower });
   } catch (err) {
     await deleteUser(credential.user).catch(() => {});
-    throw new Error("Это имя пользователя только что заняли, попробуйте другое");
+    if (err.message === "taken") {
+      throw new Error("Это имя пользователя уже занято");
+    }
+    throw new Error("Не удалось сохранить профиль: " + err.message);
   }
 
-  await setDoc(doc(db, "users", uid), {
-    username: usernameLower,
-    // Загрузка своей аватарки пока отключена (нужен платный план Blaze для
-    // Firebase Storage) — используется автоматический цветной аватар с
-    // буквой имени, см. ui-helpers.js -> renderAvatar(). Когда решите
-    // включить Storage, здесь можно вернуть загрузку файла.
-    avatarUrl: null,
-    createdAt: serverTimestamp(),
-  });
-
-  return uid;
+  return credential.user.uid;
 }
 
 export async function login({ username, password }) {

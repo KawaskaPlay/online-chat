@@ -1,7 +1,7 @@
 {
   "name": "online-chat",
   "version": "1.0.0",
-  "description": "Учебный проект: онлайн-чат с регистрацией, личными и групповыми чатами (Firebase)",
+  "description": "Учебный проект: онлайн-чат. Вход/регистрация — Firebase Authentication, чаты и сообщения — Redis (Socket.IO для реального времени)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -10,7 +10,9 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1",
+    "socket.io": "^4.7.5"
   },
   "license": "MIT"
 }
