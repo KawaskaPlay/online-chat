@@ -228,6 +228,29 @@ async function getMessages(chatId) {
 // раздуть память Redis и забить канал другим пользователям.
 const MAX_MESSAGE_LENGTH = 4000;
 
+// replyTo раньше принимался от клиента как есть — { messageId, senderId,
+// text } целиком клиентские данные. Ничто не мешало отправить чужому
+// пользователю сообщение с якобы "цитатой" любого другого участника чата с
+// произвольным текстом, которого тот никогда не писал (message spoofing):
+// escapeHtml() на клиенте не даёт вставить HTML, но не мешает подделать
+// сам факт и содержание цитаты. Теперь сервер сам находит исходное
+// сообщение по messageId в истории чата и берёт senderId/text из него —
+// клиентские senderId/text в replyTo просто игнорируются.
+async function resolveReplyTo(chatId, replyTo) {
+  const messageId = replyTo?.messageId;
+  if (!messageId) return null;
+  const raw = await redis.lrange(chatMessagesKey(chatId), 0, -1);
+  for (const item of raw) {
+    const original = JSON.parse(item);
+    if (original.id === messageId) {
+      return { messageId, senderId: original.senderId, text: original.text || "" };
+    }
+  }
+  // Сообщение не нашлось (например, уже вытеснено лимитом в 200 штук) —
+  // не выдумываем цитату из клиентских данных, просто не показываем её.
+  return null;
+}
+
 async function sendMessage(chatId, senderId, { text, replyTo } = {}) {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("Пустое сообщение");
@@ -235,13 +258,15 @@ async function sendMessage(chatId, senderId, { text, replyTo } = {}) {
     throw new Error(`Сообщение слишком длинное (максимум ${MAX_MESSAGE_LENGTH} символов)`);
   }
 
+  const safeReplyTo = await resolveReplyTo(chatId, replyTo);
+
   const message = {
     id: crypto.randomUUID(),
     type: "text",
     text: trimmed,
     senderId,
     createdAt: Date.now(),
-    replyTo: replyTo || null,
+    replyTo: safeReplyTo,
   };
 
   await redis.rpush(chatMessagesKey(chatId), JSON.stringify(message));
