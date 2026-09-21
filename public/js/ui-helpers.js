@@ -28,8 +28,13 @@ export function formatDay(value) {
 }
 
 // Аватар-заглушка: цветной кружок с первой буквой имени — используется,
-// если у пользователя нет своей картинки.
-const AVATAR_COLORS = ["#e07a5f", "#3d5a80", "#81b29a", "#f2cc8f", "#9b5de5", "#00bbf9", "#f15bb5", "#588157"];
+// если у пользователя нет своей картинки. Пользователь может сам выбрать
+// цвет и/или эмодзи вместо буквы (см. renderAvatar ниже и app.js —
+// #avatar-modal) — тот же список цветов сервер проверяет в
+// server/chatStore.js (AVATAR_COLORS), так что значение, пришедшее от
+// сервера в profile.avatarColor, всегда из этого набора. Экспортируем,
+// чтобы app.js мог нарисовать те же самые кружки-варианты в модалке выбора.
+export const AVATAR_COLORS = ["#e07a5f", "#3d5a80", "#81b29a", "#f2cc8f", "#9b5de5", "#00bbf9", "#f15bb5", "#588157"];
 
 function colorForName(name) {
   let hash = 0;
@@ -52,7 +57,13 @@ export function safeImageUrl(url) {
   }
 }
 
-export function renderAvatar(username, avatarUrl, size = 40) {
+// style = { color, emoji } — необязательное переопределение заглушки,
+// обычно profile.avatarColor/avatarEmoji с сервера (уже проверены там по
+// фиксированному списку — см. chatStore.updateAvatarStyle). На всякий
+// случай всё равно экранируем перед вставкой: то же правило, что и для
+// avatarUrl — клиентскому/чужому значению в HTML не доверяем никогда,
+// даже если по теории оно уже должно быть безопасным.
+export function renderAvatar(username, avatarUrl, size = 40, style = {}) {
   const safeName = username || "?";
   const safeUrl = safeImageUrl(avatarUrl);
   if (safeUrl) {
@@ -61,7 +72,9 @@ export function renderAvatar(username, avatarUrl, size = 40) {
     // произвольный HTML/обработчик события — это и есть хранимая XSS.
     return `<img class="avatar" src="${escapeHtml(safeUrl)}" alt="${escapeHtml(safeName)}" style="width:${size}px;height:${size}px;">`;
   }
-  const initial = safeName.trim().charAt(0).toUpperCase() || "?";
-  const bg = colorForName(safeName);
-  return `<div class="avatar avatar-fallback" style="width:${size}px;height:${size}px;line-height:${size}px;font-size:${Math.round(size * 0.45)}px;background:${bg};">${initial}</div>`;
+  const hasEmoji = !!style.emoji;
+  const glyph = hasEmoji ? style.emoji : (safeName.trim().charAt(0).toUpperCase() || "?");
+  const bg = style.color || colorForName(safeName);
+  const fontSize = Math.round(size * (hasEmoji ? 0.55 : 0.45));
+  return `<div class="avatar avatar-fallback" style="width:${size}px;height:${size}px;line-height:${size}px;font-size:${fontSize}px;background:${escapeHtml(bg)};">${escapeHtml(glyph)}</div>`;
 }

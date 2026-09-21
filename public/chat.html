@@ -64,6 +64,20 @@
     </div>
   </div>
 
+  <!-- Модалка: настройка аватарки (цвет / эмодзи заглушки — фото не загружаем, см. README) -->
+  <div class="modal hidden" id="avatar-modal">
+    <div class="modal-card">
+      <h2>Ваша аватарка</h2>
+      <div id="avatar-preview" class="avatar-preview-wrap"></div>
+      <p class="modal-section-label">Цвет</p>
+      <div class="avatar-swatches" id="avatar-color-swatches"></div>
+      <p class="modal-section-label">Эмодзи вместо буквы</p>
+      <div class="avatar-emoji-grid" id="avatar-emoji-options"></div>
+      <button type="button" id="avatar-reset-btn" class="modal-secondary">Сбросить</button>
+      <button type="button" class="modal-close" data-close="avatar-modal">Готово</button>
+    </div>
+  </div>
+
   <!-- Модалка: новая группа -->
   <div class="modal hidden" id="group-modal">
     <div class="modal-card">
