@@ -93,8 +93,14 @@ io.on("connection", (socket) => {
     }
   });
 
+  // В отличие от остальных обработчиков ниже, этот раньше не проверял
+  // requireUid — любой, даже не прошедший аутентификацию сокет, мог
+  // запросить профиль (username, avatarUrl) по произвольному uid. Остальные
+  // способы получить профиль (list-users/search-users) уже требуют входа —
+  // приводим get-profile к тому же правилу: сначала подтвердите личность.
   socket.on("get-profile", async (payload, ack) => {
     try {
+      requireUid(socket);
       const profile = await chatStore.getProfile(payload?.uid);
       ack?.({ ok: true, profile });
     } catch (err) {
