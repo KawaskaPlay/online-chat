@@ -222,9 +222,18 @@ async function getMessages(chatId) {
   return raw.map((s) => JSON.parse(s));
 }
 
+// Раньше текст сообщения ничем не ограничивался по длине: клиент мог
+// прислать сообщение на несколько мегабайт, и оно целиком уходило в Redis
+// (LIST чата) и рассылалось всем участникам через Pub/Sub — дешёвый способ
+// раздуть память Redis и забить канал другим пользователям.
+const MAX_MESSAGE_LENGTH = 4000;
+
 async function sendMessage(chatId, senderId, { text, replyTo } = {}) {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("Пустое сообщение");
+  if (trimmed.length > MAX_MESSAGE_LENGTH) {
+    throw new Error(`Сообщение слишком длинное (максимум ${MAX_MESSAGE_LENGTH} символов)`);
+  }
 
   const message = {
     id: crypto.randomUUID(),
