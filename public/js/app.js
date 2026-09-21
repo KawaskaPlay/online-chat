@@ -2,9 +2,10 @@ import { auth } from "./firebase-init.js";
 import { watchAuthState, logout } from "./auth.js";
 import {
   watchMyChats, getOrCreateDirectChat, createGroupChat, searchUsers, listUsers, getUserProfile,
+  updateAvatarStyle,
 } from "./chats.js";
 import { watchMessages, sendTextMessage } from "./messages.js";
-import { renderAvatar, escapeHtml, formatTime, formatDay, safeImageUrl } from "./ui-helpers.js";
+import { renderAvatar, escapeHtml, formatTime, formatDay, safeImageUrl, AVATAR_COLORS } from "./ui-helpers.js";
 import { EMOJI_LIST } from "./emoji.js";
 
 let myProfile = null;
@@ -33,11 +34,74 @@ watchAuthState(async (user) => {
 });
 
 function renderMePanel() {
-  document.getElementById("me-avatar").innerHTML = renderAvatar(myProfile.username, myProfile.avatarUrl, 36);
+  document.getElementById("me-avatar").innerHTML = renderAvatar(
+    myProfile.username, myProfile.avatarUrl, 36,
+    { color: myProfile.avatarColor, emoji: myProfile.avatarEmoji }
+  );
   document.getElementById("me-username").textContent = myProfile.username;
 }
 
 document.getElementById("logout-btn").addEventListener("click", () => logout());
+
+// ---------- Аватарка: выбор цвета / эмодзи для заглушки ----------
+// Настоящей загрузки фото в проекте нет (см. README), поэтому свою
+// заглушку можно только настроить: выбрать цвет кружка и/или эмодзи вместо
+// первой буквы имени. Открывается кликом по своему аватару в сайдбаре.
+
+const avatarModal = document.getElementById("avatar-modal");
+
+document.getElementById("me-avatar").addEventListener("click", () => {
+  renderAvatarModal();
+  avatarModal.classList.remove("hidden");
+});
+
+function renderAvatarModal() {
+  const swatchesEl = document.getElementById("avatar-color-swatches");
+  swatchesEl.innerHTML = AVATAR_COLORS.map((color) => `
+    <button type="button" class="avatar-swatch${myProfile.avatarColor === color ? " selected" : ""}"
+      style="background:${color}" data-color="${color}" title="${color}"></button>
+  `).join("");
+
+  const emojiEl = document.getElementById("avatar-emoji-options");
+  emojiEl.innerHTML = EMOJI_LIST.map((e) => `
+    <span class="emoji-option${myProfile.avatarEmoji === e ? " selected" : ""}" data-emoji="${e}">${e}</span>
+  `).join("");
+
+  document.getElementById("avatar-preview").innerHTML = renderAvatar(
+    myProfile.username, myProfile.avatarUrl, 64,
+    { color: myProfile.avatarColor, emoji: myProfile.avatarEmoji }
+  );
+}
+
+async function applyAvatarStyle(patch) {
+  try {
+    myProfile = await updateAvatarStyle({
+      color: "color" in patch ? patch.color : (myProfile.avatarColor || ""),
+      emoji: "emoji" in patch ? patch.emoji : (myProfile.avatarEmoji || ""),
+    });
+    profileCache.set(myProfile.uid, myProfile);
+    renderMePanel();
+    renderAvatarModal();
+  } catch (err) {
+    alert("Не удалось обновить аватарку: " + err.message);
+  }
+}
+
+document.getElementById("avatar-color-swatches").addEventListener("click", (e) => {
+  const btn = e.target.closest(".avatar-swatch");
+  if (!btn) return;
+  applyAvatarStyle({ color: btn.dataset.color });
+});
+
+document.getElementById("avatar-emoji-options").addEventListener("click", (e) => {
+  const opt = e.target.closest(".emoji-option");
+  if (!opt) return;
+  applyAvatarStyle({ emoji: opt.dataset.emoji });
+});
+
+document.getElementById("avatar-reset-btn").addEventListener("click", () => {
+  applyAvatarStyle({ color: "", emoji: "" });
+});
 
 // ---------- Список чатов ----------
 
@@ -47,14 +111,14 @@ async function renderChatList(chats) {
 
   for (const chat of chats) {
     chatsCache.set(chat.id, chat);
-    const { title, avatarUrl } = await chatDisplayInfo(chat);
+    const { title, avatarUrl, avatarColor, avatarEmoji } = await chatDisplayInfo(chat);
 
     const item = document.createElement("div");
     item.className = "chat-item" + (chat.id === currentChatId ? " active" : "");
     item.dataset.chatId = chat.id;
     const preview = chat.lastMessage ? escapeHtml(chat.lastMessage.text) : "Нет сообщений";
     item.innerHTML = `
-      ${renderAvatar(title, avatarUrl, 44)}
+      ${renderAvatar(title, avatarUrl, 44, { color: avatarColor, emoji: avatarEmoji })}
       <div class="chat-item-info">
         <div class="chat-item-title">${escapeHtml(title)}</div>
         <div class="chat-item-preview">${preview}</div>
@@ -71,11 +135,19 @@ async function renderChatList(chats) {
 
 async function chatDisplayInfo(chat) {
   if (chat.type === "group") {
-    return { title: chat.name || "Группа", avatarUrl: chat.avatarUrl };
+    // У группы своя avatarUrl (createGroupChat), но не цвет/эмодзи — это
+    // персональная настройка профиля, для группы просто нет "владельца"
+    // заглушки, поэтому renderAvatar сам посчитает цвет по названию группы.
+    return { title: chat.name || "Группа", avatarUrl: chat.avatarUrl, avatarColor: null, avatarEmoji: null };
   }
   const otherUid = chat.memberIds.find((id) => id !== auth.currentUser.uid);
   const profile = await getCachedProfile(otherUid);
-  return { title: profile?.username || "Пользователь", avatarUrl: profile?.avatarUrl };
+  return {
+    title: profile?.username || "Пользователь",
+    avatarUrl: profile?.avatarUrl,
+    avatarColor: profile?.avatarColor,
+    avatarEmoji: profile?.avatarEmoji,
+  };
 }
 
 async function getCachedProfile(uid) {
@@ -99,10 +171,10 @@ async function openChat(chatId) {
   });
 
   const chat = chatsCache.get(chatId);
-  const { title, avatarUrl } = await chatDisplayInfo(chat);
+  const { title, avatarUrl, avatarColor, avatarEmoji } = await chatDisplayInfo(chat);
   const memberCount = chat.memberIds.length;
   document.getElementById("chat-header-info").innerHTML = `
-    ${renderAvatar(title, avatarUrl, 36)}
+    ${renderAvatar(title, avatarUrl, 36, { color: avatarColor, emoji: avatarEmoji })}
     <div>
       <div class="chat-header-title">${escapeHtml(title)}</div>
       ${chat.type === "group" ? `<div class="chat-header-sub">${memberCount} участников</div>` : ""}
@@ -163,7 +235,7 @@ async function renderMessages(messages) {
     }
 
     row.innerHTML = `
-      ${isMine ? "" : renderAvatar(profile?.username || "?", profile?.avatarUrl, 32)}
+      ${isMine ? "" : renderAvatar(profile?.username || "?", profile?.avatarUrl, 32, { color: profile?.avatarColor, emoji: profile?.avatarEmoji })}
       <div class="message-bubble">
         ${isMine ? "" : `<div class="message-author">${escapeHtml(profile?.username || "?")}</div>`}
         ${replyQuoteHtml}

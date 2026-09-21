@@ -583,6 +583,58 @@ input {
   background: #fff;
 }
 
+/* ---------- Модалка настройки аватарки ---------- */
+
+.modal-section-label {
+  margin: 4px 0 -4px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.avatar-preview-wrap { display: flex; justify-content: center; padding: 4px 0; }
+
+.avatar-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.avatar-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+}
+
+.avatar-swatch.selected {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px #fff inset;
+}
+
+.avatar-emoji-grid {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.avatar-emoji-grid .emoji-option.selected { background: var(--bg); outline: 2px solid var(--accent); }
+
+.modal-secondary {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+}
+
+#me-avatar { cursor: pointer; }
+
 /* ---------- Адаптив для телефонов ---------- */
 
 @media (max-width: 768px) {

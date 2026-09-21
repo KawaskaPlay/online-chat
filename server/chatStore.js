@@ -16,6 +16,25 @@ const PUBSUB_CHANNEL = "chat-events";
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 const USERNAMES_INDEX = "usernames_index"; // ZSET, score всегда 0 — нужен для ZRANGEBYLEX (поиск по началу имени) и ZRANGE (весь список)
 
+// Реальной загрузки фото в проекте нет (см. README — платный план Blaze
+// нужен не будет), поэтому "аватарка" — это цветной кружок с буквой имени
+// или, по желанию пользователя, с эмодзи вместо буквы. Оба значения
+// приходят от клиента (update-avatar-style), поэтому здесь — тот же
+// принцип, что и с avatarUrl раньше: сервер валидирует по фиксированному
+// списку и не доверяет клиенту произвольную строку, которая потом попадёт
+// в HTML (background: ..., emoji-глиф). Палитра цветов должна совпадать со
+// списком в public/js/ui-helpers.js (AVATAR_COLORS), а список эмодзи — с
+// public/js/emoji.js (EMOJI_LIST); дублируем их здесь, а не импортируем,
+// потому что сервер — CommonJS, а клиентские модули — ES-модули.
+const AVATAR_COLORS = ["#e07a5f", "#3d5a80", "#81b29a", "#f2cc8f", "#9b5de5", "#00bbf9", "#f15bb5", "#588157"];
+const AVATAR_EMOJI = [
+  "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😜", "🤔", "🙂",
+  "😴", "😭", "😡", "🥳", "😱", "😇", "🤗", "🙄", "😅", "🤯",
+  "👍", "👎", "👏", "🙏", "💪", "🤝", "👋", "✌️",
+  "❤️", "💔", "🔥", "✨", "⭐", "🎉", "🎂", "☕", "🍕", "⚽",
+  "🚀", "💡", "✅", "❌", "☀️", "🌧️", "🐱", "🐶",
+];
+
 function usernameKey(usernameLower) {
   return `username:${usernameLower}`;
 }
@@ -55,16 +74,49 @@ async function registerProfile(uid, username) {
   if (claimed !== "OK") {
     throw new Error("taken");
   }
-  await redis.hset(userKey(uid), { username: usernameLower, avatarUrl: "" });
+  await redis.hset(userKey(uid), { username: usernameLower, avatarUrl: "", avatarColor: "", avatarEmoji: "" });
   await redis.zadd(USERNAMES_INDEX, 0, usernameLower);
-  return { uid, username: usernameLower, avatarUrl: null };
+  return { uid, username: usernameLower, avatarUrl: null, avatarColor: null, avatarEmoji: null };
 }
 
 async function getProfile(uid) {
   if (!uid) return null;
   const data = await redis.hgetall(userKey(uid));
   if (!data || !data.username) return null;
-  return { uid, username: data.username, avatarUrl: data.avatarUrl || null };
+  return {
+    uid,
+    username: data.username,
+    avatarUrl: data.avatarUrl || null,
+    avatarColor: data.avatarColor || null,
+    avatarEmoji: data.avatarEmoji || null,
+  };
+}
+
+// Пользователь выбирает цвет заглушки и/или эмодзи вместо буквы имени —
+// оба поля необязательны и независимы (можно задать только цвет, только
+// эмодзи, оба сразу или сбросить обратно на "по умолчанию" пустой
+// строкой/null). И то, и другое проверяется по фиксированному списку:
+// это не url и не произвольный текст, поэтому "как в аватарке" тут в
+// принципе невозможно ничего внедрить, но лучше отклонить на входе, чем
+// полагаться только на экранирование при отрисовке.
+async function updateAvatarStyle(uid, { color, emoji } = {}) {
+  const patch = {};
+  if (color !== undefined) {
+    if (color && !AVATAR_COLORS.includes(color)) {
+      throw new Error("Недопустимый цвет аватарки");
+    }
+    patch.avatarColor = color || "";
+  }
+  if (emoji !== undefined) {
+    if (emoji && !AVATAR_EMOJI.includes(emoji)) {
+      throw new Error("Недопустимый эмодзи для аватарки");
+    }
+    patch.avatarEmoji = emoji || "";
+  }
+  if (Object.keys(patch).length > 0) {
+    await redis.hset(userKey(uid), patch);
+  }
+  return getProfile(uid);
 }
 
 // Для аккаунтов Firebase Authentication, созданных ещё до переезда чата на
@@ -303,6 +355,7 @@ module.exports = {
   registerProfile,
   getProfile,
   ensureProfile,
+  updateAvatarStyle,
   listUsers,
   searchUsers,
   getOrCreateDirectChat,

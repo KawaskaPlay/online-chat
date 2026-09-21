@@ -81,3 +81,11 @@ export async function getUserProfile(uid) {
   const res = await call("get-profile", { uid });
   return res.profile;
 }
+
+// color/emoji — из фиксированных списков (ui-helpers.AVATAR_COLORS,
+// emoji.EMOJI_LIST); пустая строка или undefined сбрасывает соответствующее
+// поле обратно на "по умолчанию" (цвет по хэшу имени / буква имени).
+export async function updateAvatarStyle({ color, emoji } = {}) {
+  const res = await call("update-avatar-style", { color, emoji });
+  return res.profile;
+}

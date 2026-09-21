@@ -120,6 +120,19 @@ io.on("connection", (socket) => {
   // запросить профиль (username, avatarUrl) по произвольному uid. Остальные
   // способы получить профиль (list-users/search-users) уже требуют входа —
   // приводим get-profile к тому же правилу: сначала подтвердите личность.
+  // Реальной загрузки фото нет (см. README про план Blaze) — вместо этого
+  // пользователь может выбрать цвет кружка-заглушки и/или эмодзи вместо
+  // буквы имени. Валидация значений — в chatStore.updateAvatarStyle.
+  socket.on("update-avatar-style", async (payload, ack) => {
+    try {
+      const uid = requireUid(socket);
+      const profile = await chatStore.updateAvatarStyle(uid, payload || {});
+      ack?.({ ok: true, profile });
+    } catch (err) {
+      ack?.({ ok: false, error: err.message });
+    }
+  });
+
   socket.on("get-profile", async (payload, ack) => {
     try {
       requireUid(socket);
