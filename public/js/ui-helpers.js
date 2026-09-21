@@ -37,10 +37,29 @@ function colorForName(name) {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
+// Разрешаем только http(s) — так в src="${...}" никогда не попадёт
+// javascript:/data: URI или что-то, что ломает атрибут кавычкой.
+// Экспортируем: этот же фильтр нужен везде, где URL картинки вставляется
+// в HTML-атрибут напрямую (см. app.js — фото в сообщениях).
+export function safeImageUrl(url) {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 export function renderAvatar(username, avatarUrl, size = 40) {
   const safeName = username || "?";
-  if (avatarUrl) {
-    return `<img class="avatar" src="${avatarUrl}" alt="${escapeHtml(safeName)}" style="width:${size}px;height:${size}px;">`;
+  const safeUrl = safeImageUrl(avatarUrl);
+  if (safeUrl) {
+    // escapeHtml обязателен и для URL: без него значение могло бы выйти
+    // за пределы атрибута src (например через двойную кавычку) и вставить
+    // произвольный HTML/обработчик события — это и есть хранимая XSS.
+    return `<img class="avatar" src="${escapeHtml(safeUrl)}" alt="${escapeHtml(safeName)}" style="width:${size}px;height:${size}px;">`;
   }
   const initial = safeName.trim().charAt(0).toUpperCase() || "?";
   const bg = colorForName(safeName);

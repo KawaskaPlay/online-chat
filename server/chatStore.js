@@ -167,6 +167,22 @@ async function getOrCreateDirectChat(myUid, otherUid) {
   return chatId;
 }
 
+// Тот же фильтр, что и на клиенте (ui-helpers.js safeImageUrl) — сервер не
+// должен доверять клиенту и обязан сам отвергать javascript:/data: URI и
+// т.п. до того, как значение попадёт в Redis и будет разослано остальным
+// участникам чата.
+function safeImageUrl(url) {
+  const trimmed = String(url || "").trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return parsed.href;
+  } catch {
+    return "";
+  }
+}
+
 async function createGroupChat(myUid, { name, memberUids, avatarUrl } = {}) {
   const trimmedName = String(name || "").trim();
   if (!trimmedName) throw new Error("Введите название группы");
@@ -179,7 +195,7 @@ async function createGroupChat(myUid, { name, memberUids, avatarUrl } = {}) {
   await redis.hset(chatKey(chatId), {
     type: "group",
     name: trimmedName,
-    avatarUrl: avatarUrl || "",
+    avatarUrl: safeImageUrl(avatarUrl),
     memberIds: JSON.stringify(allMembers),
     createdAt: String(now),
     createdBy: myUid,
