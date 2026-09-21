@@ -4,7 +4,7 @@ import {
   watchMyChats, getOrCreateDirectChat, createGroupChat, searchUsers, listUsers, getUserProfile,
 } from "./chats.js";
 import { watchMessages, sendTextMessage } from "./messages.js";
-import { renderAvatar, escapeHtml, formatTime, formatDay } from "./ui-helpers.js";
+import { renderAvatar, escapeHtml, formatTime, formatDay, safeImageUrl } from "./ui-helpers.js";
 import { EMOJI_LIST } from "./emoji.js";
 
 let myProfile = null;
@@ -143,8 +143,9 @@ async function renderMessages(messages) {
     row.className = "message-row " + (isMine ? "mine" : "theirs");
     row.dataset.messageId = msg.id;
 
-    const bodyHtml = msg.type === "image"
-      ? `<a href="${msg.imageUrl}" target="_blank" rel="noopener"><img class="message-image" src="${msg.imageUrl}" alt="фото"></a>`
+    const safeMsgImageUrl = msg.type === "image" ? safeImageUrl(msg.imageUrl) : null;
+    const bodyHtml = safeMsgImageUrl
+      ? `<a href="${escapeHtml(safeMsgImageUrl)}" target="_blank" rel="noopener"><img class="message-image" src="${escapeHtml(safeMsgImageUrl)}" alt="фото"></a>`
       : `<div class="message-text">${escapeHtml(msg.text)}</div>`;
 
     let replyQuoteHtml = "";

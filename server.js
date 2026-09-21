@@ -52,6 +52,28 @@ function requireUid(socket) {
   return socket.data.uid;
 }
 
+// ---------- Rate limiting для send-message ----------
+// Раньше ничего не мешало одному клиенту слать сообщения в цикле без пауз
+// (скриптом, а не руками) — это и спам собеседникам, и лишняя нагрузка на
+// Redis/Pub/Sub. Простое ограничение по скользящему окну на пользователя:
+// не больше MAX_MESSAGES_PER_WINDOW сообщений за WINDOW_MS. Для учебного
+// проекта с одним процессом сервера достаточно хранить счётчики в памяти —
+// не нужен отдельный Redis-механизм (это же ограничение, ключ к которому и
+// так живёт на сервере, а не что-то, что должно переживать перезапуск).
+const RATE_WINDOW_MS = 10_000;
+const MAX_MESSAGES_PER_WINDOW = 20;
+const messageTimestamps = new Map(); // uid -> [timestamps]
+
+function checkMessageRateLimit(uid) {
+  const now = Date.now();
+  const timestamps = (messageTimestamps.get(uid) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (timestamps.length >= MAX_MESSAGES_PER_WINDOW) {
+    throw new Error("Слишком много сообщений подряд, подождите немного");
+  }
+  timestamps.push(now);
+  messageTimestamps.set(uid, timestamps);
+}
+
 io.on("connection", (socket) => {
   // Личная "комната" пользователя — сюда сервер шлёт события вроде "у тебя
   // новый чат" или "обновился чат", даже если клиент ещё не открыл его.
@@ -93,8 +115,14 @@ io.on("connection", (socket) => {
     }
   });
 
+  // В отличие от остальных обработчиков ниже, этот раньше не проверял
+  // requireUid — любой, даже не прошедший аутентификацию сокет, мог
+  // запросить профиль (username, avatarUrl) по произвольному uid. Остальные
+  // способы получить профиль (list-users/search-users) уже требуют входа —
+  // приводим get-profile к тому же правилу: сначала подтвердите личность.
   socket.on("get-profile", async (payload, ack) => {
     try {
+      requireUid(socket);
       const profile = await chatStore.getProfile(payload?.uid);
       ack?.({ ok: true, profile });
     } catch (err) {
@@ -181,6 +209,7 @@ io.on("connection", (socket) => {
   socket.on("send-message", async (payload, ack) => {
     try {
       const uid = requireUid(socket);
+      checkMessageRateLimit(uid);
       const chatId = payload?.chatId;
       if (!(await chatStore.isMember(chatId, uid))) throw new Error("Вы не участник этого чата");
       const message = await chatStore.sendMessage(chatId, uid, payload || {});

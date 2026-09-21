@@ -167,6 +167,22 @@ async function getOrCreateDirectChat(myUid, otherUid) {
   return chatId;
 }
 
+// Тот же фильтр, что и на клиенте (ui-helpers.js safeImageUrl) — сервер не
+// должен доверять клиенту и обязан сам отвергать javascript:/data: URI и
+// т.п. до того, как значение попадёт в Redis и будет разослано остальным
+// участникам чата.
+function safeImageUrl(url) {
+  const trimmed = String(url || "").trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return parsed.href;
+  } catch {
+    return "";
+  }
+}
+
 async function createGroupChat(myUid, { name, memberUids, avatarUrl } = {}) {
   const trimmedName = String(name || "").trim();
   if (!trimmedName) throw new Error("Введите название группы");
@@ -179,7 +195,7 @@ async function createGroupChat(myUid, { name, memberUids, avatarUrl } = {}) {
   await redis.hset(chatKey(chatId), {
     type: "group",
     name: trimmedName,
-    avatarUrl: avatarUrl || "",
+    avatarUrl: safeImageUrl(avatarUrl),
     memberIds: JSON.stringify(allMembers),
     createdAt: String(now),
     createdBy: myUid,
@@ -206,9 +222,43 @@ async function getMessages(chatId) {
   return raw.map((s) => JSON.parse(s));
 }
 
+// Раньше текст сообщения ничем не ограничивался по длине: клиент мог
+// прислать сообщение на несколько мегабайт, и оно целиком уходило в Redis
+// (LIST чата) и рассылалось всем участникам через Pub/Sub — дешёвый способ
+// раздуть память Redis и забить канал другим пользователям.
+const MAX_MESSAGE_LENGTH = 4000;
+
+// replyTo раньше принимался от клиента как есть — { messageId, senderId,
+// text } целиком клиентские данные. Ничто не мешало отправить чужому
+// пользователю сообщение с якобы "цитатой" любого другого участника чата с
+// произвольным текстом, которого тот никогда не писал (message spoofing):
+// escapeHtml() на клиенте не даёт вставить HTML, но не мешает подделать
+// сам факт и содержание цитаты. Теперь сервер сам находит исходное
+// сообщение по messageId в истории чата и берёт senderId/text из него —
+// клиентские senderId/text в replyTo просто игнорируются.
+async function resolveReplyTo(chatId, replyTo) {
+  const messageId = replyTo?.messageId;
+  if (!messageId) return null;
+  const raw = await redis.lrange(chatMessagesKey(chatId), 0, -1);
+  for (const item of raw) {
+    const original = JSON.parse(item);
+    if (original.id === messageId) {
+      return { messageId, senderId: original.senderId, text: original.text || "" };
+    }
+  }
+  // Сообщение не нашлось (например, уже вытеснено лимитом в 200 штук) —
+  // не выдумываем цитату из клиентских данных, просто не показываем её.
+  return null;
+}
+
 async function sendMessage(chatId, senderId, { text, replyTo } = {}) {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("Пустое сообщение");
+  if (trimmed.length > MAX_MESSAGE_LENGTH) {
+    throw new Error(`Сообщение слишком длинное (максимум ${MAX_MESSAGE_LENGTH} символов)`);
+  }
+
+  const safeReplyTo = await resolveReplyTo(chatId, replyTo);
 
   const message = {
     id: crypto.randomUUID(),
@@ -216,7 +266,7 @@ async function sendMessage(chatId, senderId, { text, replyTo } = {}) {
     text: trimmed,
     senderId,
     createdAt: Date.now(),
-    replyTo: replyTo || null,
+    replyTo: safeReplyTo,
   };
 
   await redis.rpush(chatMessagesKey(chatId), JSON.stringify(message));
